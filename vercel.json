@@ -1,4 +1,5 @@
 {
+  "framework": null,
   "crons": [
     { "path": "/api/run", "schedule": "30 3 * * *" }
   ],
