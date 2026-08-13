@@ -1,0 +1,12 @@
+{
+  "crons": [
+    { "path": "/api/run", "schedule": "0 */6 * * *" }
+  ],
+  "functions": {
+    "api/search.py": { "maxDuration": 60 },
+    "api/run.py": { "maxDuration": 60 },
+    "api/run-topic.py": { "maxDuration": 60 },
+    "api/slack-update.py": { "maxDuration": 10 },
+    "api/headlines.py": { "maxDuration": 15 }
+  }
+}

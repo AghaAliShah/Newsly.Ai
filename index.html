@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Newsly.AI — AI news, distilled</title>
+<meta name="description" content="Newsly.AI pulls live coverage on any topic and returns a clean, sourced brief.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23b81d24'/%3E%3Crect x='8' y='9' width='11' height='3' rx='1.5' fill='white'/%3E%3Crect x='8' y='15' width='16' height='2.5' rx='1.25' fill='white' opacity='.75'/%3E%3Crect x='8' y='20' width='16' height='2.5' rx='1.25' fill='white' opacity='.75'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #101318;
+    --ink-soft: #5c646e;
+    --ink-faint: #686f78;  /* 4.66:1 on --paper — the mono meta text is small, so it needs full AA, not "muted enough to look right" */
+    --paper: #f6f5f2;
+    --surface: #ffffff;
+    --surface-2: #fbfaf8;
+    --line: rgba(16, 19, 24, 0.11);
+    --line-strong: rgba(16, 19, 24, 0.2);
+    --accent: #b81d24;
+    --accent-ink: #ffffff;
+    --accent-wash: rgba(184, 29, 36, 0.08);
+    --shadow: 0 1px 2px rgba(16, 19, 24, 0.05), 0 8px 24px rgba(16, 19, 24, 0.06);
+    --shadow-lift: 0 2px 4px rgba(16, 19, 24, 0.06), 0 14px 32px rgba(16, 19, 24, 0.1);
+    --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #eef0f3;
+      --ink-soft: #9aa2ac;
+      --ink-faint: #767e88;  /* 4.79:1 on --paper */
+      --paper: #0a0b0d;
+      --surface: #111417;
+      --surface-2: #15181c;
+      --line: rgba(255, 255, 255, 0.1);
+      --line-strong: rgba(255, 255, 255, 0.2);
+      --accent: #e8464e;
+      --accent-ink: #14161a;
+      --accent-wash: rgba(232, 70, 78, 0.12);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+      --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.45), 0 14px 32px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    /* full-height column so the footer sits at the bottom on the empty
+       landing state instead of floating mid-screen above dead space */
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* ---------- breaking-news ticker ---------- */
+  .ticker {
+    position: sticky; top: 0; z-index: 50;
+    display: none;                      /* revealed only once real headlines load */
+    align-items: stretch;
+    height: 38px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .ticker.is-live { display: flex; }
+  .ticker-label {
+    display: flex; align-items: center; gap: 7px;
+    flex-shrink: 0; padding: 0 14px;
+    background: var(--accent); color: var(--accent-ink);
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  .ticker-viewport { position: relative; flex: 1; overflow: hidden; }
+  /* fade the headlines out at both edges instead of cutting them off mid-word */
+  .ticker-viewport::before, .ticker-viewport::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 40px; z-index: 2; pointer-events: none;
+  }
+  .ticker-viewport::before { left: 0; background: linear-gradient(90deg, var(--surface), transparent); }
+  .ticker-viewport::after { right: 0; background: linear-gradient(270deg, var(--surface), transparent); }
+
+  .ticker-track {
+    display: flex; align-items: center; height: 100%; width: max-content;
+    animation: scroll 60s linear infinite;
+  }
+  .ticker:hover .ticker-track { animation-play-state: paused; }
+  @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+  .ticker-track a {
+    display: inline-flex; align-items: center; padding: 0 2px;
+    color: var(--ink-soft); text-decoration: none;
+    font-size: 0.8rem; white-space: nowrap;
+  }
+  .ticker-track a:hover { color: var(--accent); }
+  .ticker-sep { color: var(--accent); padding: 0 14px; font-size: 0.6rem; }
+
+  /* ---------- layout ---------- */
+  .page {
+    width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 28px 40px;
+    flex: 1; display: flex; flex-direction: column;
+  }
+
+  header.masthead {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 20px; padding: 26px 0 22px; border-bottom: 1px solid var(--line);
+  }
+  .wordmark {
+    margin: 0; font-family: var(--serif);
+    font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em;
+  }
+  .wordmark .dot-ai { color: var(--accent); }
+  .masthead .dateline {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-faint); white-space: nowrap;
+  }
+
+  /* ---------- hero ---------- */
+  .hero {
+    display: grid; grid-template-columns: 1.15fr 0.85fr;
+    gap: 48px; align-items: center; padding: 60px 0 52px;
+  }
+  .hero h2 {
+    margin: 0 0 16px; font-family: var(--serif); font-weight: 600;
+    font-size: clamp(2.1rem, 4.6vw, 3.1rem); line-height: 1.12; letter-spacing: -0.025em;
+  }
+  .hero h2 em { font-style: italic; color: var(--accent); }
+  .hero .lede {
+    margin: 0 0 30px; max-width: 44ch;
+    font-size: 1.02rem; line-height: 1.6; color: var(--ink-soft);
+  }
+
+  form { display: flex; gap: 10px; margin-bottom: 14px; }
+  .field { position: relative; flex: 1; }
+  .field svg {
+    position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
+    width: 17px; height: 17px; color: var(--ink-faint); pointer-events: none;
+  }
+  input[type="text"] {
+    width: 100%; padding: 14px 16px 14px 44px;
+    font-family: var(--sans); font-size: 0.95rem;
+    color: var(--ink); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 4px;
+    outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+  input[type="text"]::placeholder { color: var(--ink-faint); }
+
+  button.primary {
+    padding: 14px 26px; border: 1px solid var(--accent); border-radius: 4px;
+    background: var(--accent); color: var(--accent-ink);
+    font-family: var(--sans); font-size: 0.88rem; font-weight: 600; letter-spacing: 0.01em;
+    cursor: pointer; white-space: nowrap; transition: opacity 0.15s;
+  }
+  button.primary:hover:not(:disabled) { opacity: 0.88; }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chips span { font-size: 0.76rem; color: var(--ink-faint); align-self: center; margin-right: 3px; }
+  .chip {
+    padding: 5px 11px; border: 1px solid var(--line); border-radius: 100px;
+    background: transparent; color: var(--ink-soft);
+    font-family: var(--sans); font-size: 0.76rem; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- 3-frame looping illustration ---------- */
+  .stage { position: relative; width: 100%; aspect-ratio: 4 / 3; }
+  .stage svg { width: 100%; height: 100%; overflow: visible; }
+  .stage .cap {
+    position: absolute; bottom: 0; left: 0; right: 0; text-align: center;
+    font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .cap b { display: block; animation: caption 15s infinite; opacity: 0; font-weight: 500; }
+  .cap b:nth-child(2) { margin-top: -1.1em; animation-delay: -10s; }
+  .cap b:nth-child(3) { margin-top: -1.1em; animation-delay: -5s; }
+  /* timed identically to @keyframes frame so a caption is never orphaned
+     from the scene it labels */
+  @keyframes caption {
+    0%        { opacity: 0; }
+    3%, 33%   { opacity: 1; }
+    36%, 100% { opacity: 0; }
+  }
+
+  /* Three scenes on one 15s loop, 5s apiece. The windows overlap on purpose:
+     a scene starts fading in (0%) while the previous one is still fading out
+     (33%->36%), so the two crossfade instead of both hitting zero and
+     flashing an empty stage between beats. */
+  .frame { animation: frame 15s infinite; opacity: 0; }
+  .frame-2 { animation-delay: -10s; }
+  .frame-3 { animation-delay: -5s; }
+  @keyframes frame {
+    0%        { opacity: 0; transform: translateY(8px); }
+    3%, 33%   { opacity: 1; transform: translateY(0); }
+    36%, 100% { opacity: 0; transform: translateY(-8px); }
+  }
+
+  .stroke { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; }
+  .stroke-soft { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-linecap: round; }
+  .fill-line { fill: var(--line-strong); }
+  .fill-accent { fill: var(--accent); }
+  .stroke-accent { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; }
+  .panel { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.5; }
+
+  /* frame 1 — signal radiating from the tower */
+  .wave { animation: wave 2.5s ease-out infinite; opacity: 0; transform-origin: 160px 128px; }
+  .wave-2 { animation-delay: 0.55s; }
+  .wave-3 { animation-delay: 1.1s; }
+  @keyframes wave {
+    0%   { opacity: 0.75; transform: scale(0.55); }
+    100% { opacity: 0; transform: scale(1.25); }
+  }
+
+  /* Frame 2 — stories stacking into a feed. These delays must sit on the
+     same phase as .frame-2 (-10s) or the cards animate while their own
+     scene is hidden and frame 2 shows up empty; the 0.2s offsets stagger
+     the stack within that window. */
+  .card-in { animation: cardIn 15s infinite; opacity: 0; }
+  .card-in-1 { animation-delay: -10s; }
+  .card-in-2 { animation-delay: -9.8s; }
+  .card-in-3 { animation-delay: -9.6s; }
+  @keyframes cardIn {
+    0%        { opacity: 0; transform: translateX(14px); }
+    4%, 33%   { opacity: 1; transform: translateX(0); }
+    36%, 100% { opacity: 0; transform: translateX(0); }
+  }
+
+  /* Frame 3 — the summary rule drawing itself in; phase-matched to .frame-3 (-5s). */
+  .rule { transform-origin: left center; animation: draw 15s infinite; animation-delay: -5s; }
+  @keyframes draw {
+    0%, 4%    { transform: scaleX(0); }
+    14%, 100% { transform: scaleX(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ticker-track, .pulse, .wave, .card-in, .rule, .frame, .cap b { animation: none !important; }
+    .frame-1, .cap b:first-child { opacity: 1 !important; }
+    .frame-2, .frame-3, .cap b:nth-child(2), .cap b:nth-child(3) { display: none; }
+    .card-in { opacity: 1 !important; }
+  }
+
+  /* ---------- results ---------- */
+  .results-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--ink);
+    margin-bottom: 4px;
+  }
+  .results-head h3 {
+    margin: 0; font-family: var(--mono); font-size: 0.7rem;
+    font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+  }
+  #status { font-size: 0.78rem; color: var(--ink-faint); }
+  #status.error { color: var(--accent); }
+  .results-head.is-idle { display: none; }
+
+  /* margin-bottom (not footer margin-top, which is `auto` for the sticky-
+     bottom trick) keeps the footer clear of the last card once results fill in */
+  .grid { display: grid; gap: 0; margin-bottom: 56px; }
+  .card {
+    padding: 22px 0; border-bottom: 1px solid var(--line);
+    animation: rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .card .headline {
+    display: block; font-family: var(--serif); font-size: 1.22rem; font-weight: 600;
+    line-height: 1.35; letter-spacing: -0.01em; color: var(--ink); text-decoration: none;
+  }
+  .card .headline:hover { color: var(--accent); }
+  .card .summary { margin: 9px 0 11px; max-width: 68ch; font-size: 0.92rem; line-height: 1.62; color: var(--ink-soft); }
+  .card .meta {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+
+  .skeleton { padding: 22px 0; border-bottom: 1px solid var(--line); }
+  .skeleton div {
+    height: 13px; border-radius: 2px; margin-bottom: 9px;
+    background: linear-gradient(90deg, var(--line) 25%, var(--surface-2) 50%, var(--line) 75%);
+    background-size: 200% 100%; animation: shimmer 1.4s linear infinite;
+  }
+  .skeleton div:first-child { height: 19px; width: 62%; }
+  .skeleton div:last-child { width: 88%; margin-bottom: 0; }
+  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+  .empty { padding: 56px 0; text-align: center; color: var(--ink-faint); font-size: 0.92rem; }
+
+  footer {
+    margin-top: auto; padding-top: 20px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint);
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 36px; padding: 40px 0 36px; }
+    .stage { max-width: 380px; margin: 0 auto; }
+  }
+  @media (max-width: 560px) {
+    .page { padding: 0 18px 70px; }
+    form { flex-direction: column; }
+    .masthead .dateline { display: none; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="ticker" id="ticker">
+    <div class="ticker-label"><span class="pulse"></span>Breaking</div>
+    <div class="ticker-viewport"><div class="ticker-track" id="ticker-track"></div></div>
+  </div>
+
+  <div class="page">
+    <header class="masthead">
+      <h1 class="wordmark">Newsly<span class="dot-ai">.AI</span></h1>
+      <div class="dateline" id="dateline"></div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <h2>The story, <em>without</em> the scroll.</h2>
+        <p class="lede">
+          Newsly.AI pulls live coverage on any topic and returns a clean,
+          sourced brief — the signal, not the feed.
+        </p>
+
+        <form id="search-form">
+          <div class="field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="topic-input" placeholder="Search a topic — semiconductors, AI policy, biotech…" autocomplete="off" required>
+          </div>
+          <button type="submit" class="primary" id="search-btn">Get the brief</button>
+        </form>
+
+        <div class="chips">
+          <span>Try</span>
+          <button class="chip" type="button">Artificial intelligence</button>
+          <button class="chip" type="button">Semiconductors</button>
+          <button class="chip" type="button">AI regulation</button>
+          <button class="chip" type="button">Robotics</button>
+        </div>
+      </div>
+
+      <div class="stage" aria-hidden="true">
+        <svg viewBox="0 0 320 240">
+          <!-- frame 1 — signal picked up -->
+          <g class="frame frame-1">
+            <g class="stroke-accent">
+              <circle class="wave wave-1" cx="160" cy="128" r="46"/>
+              <circle class="wave wave-2" cx="160" cy="128" r="46"/>
+              <circle class="wave wave-3" cx="160" cy="128" r="46"/>
+            </g>
+            <path class="stroke" d="M160 128 L136 196 M160 128 L184 196 M146 168 L174 168"/>
+            <circle class="fill-accent" cx="160" cy="122" r="5"/>
+            <path class="stroke-soft" d="M96 208 H224"/>
+          </g>
+
+          <!-- frame 2 — coverage stacks up -->
+          <g class="frame frame-2">
+            <g class="card-in card-in-1">
+              <rect class="panel" x="66" y="58" width="188" height="46" rx="4"/>
+              <rect class="fill-accent" x="80" y="72" width="26" height="4" rx="2"/>
+              <rect class="fill-line" x="80" y="84" width="128" height="4" rx="2"/>
+            </g>
+            <g class="card-in card-in-2">
+              <rect class="panel" x="66" y="116" width="188" height="46" rx="4"/>
+              <rect class="fill-accent" x="80" y="130" width="26" height="4" rx="2"/>
+              <rect class="fill-line" x="80" y="142" width="146" height="4" rx="2"/>
+            </g>
+            <g class="card-in card-in-3">
+              <rect class="panel" x="66" y="174" width="188" height="46" rx="4"/>
+              <rect class="fill-accent" x="80" y="188" width="26" height="4" rx="2"/>
+              <rect class="fill-line" x="80" y="200" width="112" height="4" rx="2"/>
+            </g>
+          </g>
+
+          <!-- frame 3 — distilled to one brief -->
+          <g class="frame frame-3">
+            <rect class="panel" x="58" y="62" width="204" height="150" rx="5"/>
+            <rect class="fill-accent rule" x="78" y="88" width="58" height="5" rx="2.5"/>
+            <rect class="fill-line" x="78" y="112" width="164" height="5" rx="2.5"/>
+            <rect class="fill-line" x="78" y="130" width="164" height="5" rx="2.5"/>
+            <rect class="fill-line" x="78" y="148" width="120" height="5" rx="2.5"/>
+            <path class="stroke-accent" d="M78 180 l9 9 l17 -19"/>
+            <rect class="fill-line" x="116" y="180" width="76" height="5" rx="2.5"/>
+          </g>
+        </svg>
+        <div class="cap">
+          <b>01 — Signal detected</b>
+          <b>02 — Coverage gathered</b>
+          <b>03 — Brief delivered</b>
+        </div>
+      </div>
+    </section>
+
+    <div class="results-head is-idle" id="results-head">
+      <h3 id="results-title">Brief</h3>
+      <div id="status"></div>
+    </div>
+    <div class="grid" id="results"></div>
+
+    <footer>
+      <div>Newsly.AI</div>
+      <div>Sourced from live coverage · Summaries are AI-generated</div>
+    </footer>
+  </div>
+
+  <script>
+    const form = document.getElementById('search-form');
+    const input = document.getElementById('topic-input');
+    const searchBtn = document.getElementById('search-btn');
+    const status = document.getElementById('status');
+    const results = document.getElementById('results');
+    const resultsHead = document.getElementById('results-head');
+    const resultsTitle = document.getElementById('results-title');
+
+    document.getElementById('dateline').textContent =
+      new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function setStatus(text, isError) {
+      status.textContent = text;
+      status.className = isError ? 'error' : '';
+    }
+
+    // ---- breaking-news ticker ----
+    // Stays hidden unless real headlines come back: a ticker padded with
+    // invented filler would read as news, which it isn't.
+    async function loadTicker() {
+      try {
+        const res = await fetch('/api/headlines');
+        if (!res.ok) return;
+        const { headlines } = await res.json();
+        if (!headlines || headlines.length === 0) return;
+
+        const items = headlines.map(h =>
+          `<a href="${escapeHtml(h.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(h.headline)}</a>`
+          + `<span class="ticker-sep">◆</span>`
+        ).join('');
+
+        // duplicated once so the -50% scroll wraps with no visible seam
+        document.getElementById('ticker-track').innerHTML = items + items;
+        document.getElementById('ticker').classList.add('is-live');
+      } catch (_) { /* ticker is decoration — never block the page on it */ }
+    }
+    loadTicker();
+
+    // ---- topic search ----
+    function renderSkeletons(n) {
+      results.innerHTML = Array.from({ length: n }, () =>
+        '<div class="skeleton"><div></div><div></div><div></div></div>').join('');
+    }
+
+    function renderArticles(articles) {
+      if (articles.length === 0) {
+        results.innerHTML = '<div class="empty">No coverage found for that topic — try something broader.</div>';
+        return;
+      }
+      results.innerHTML = articles.map((a, i) => `
+        <article class="card" style="animation-delay:${i * 55}ms">
+          <a class="headline" href="${escapeHtml(a.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(a.headline)}</a>
+          ${a.summary ? `<p class="summary">${escapeHtml(a.summary)}</p>` : ''}
+          ${a.source_name ? `<div class="meta">${escapeHtml(a.source_name)}</div>` : ''}
+        </article>
+      `).join('');
+    }
+
+    async function runSearch(topic) {
+      searchBtn.disabled = true;
+      resultsHead.classList.remove('is-idle');
+      resultsTitle.textContent = `Brief — ${topic}`;
+      setStatus('Gathering coverage…');
+      renderSkeletons(4);
+
+      try {
+        // Three failure modes worth telling apart, because "Failed to fetch"
+        // (what fetch throws for all network-level errors) tells the reader
+        // nothing about which one they hit:
+        let res;
+        try {
+          res = await fetch(`/api/search?topic=${encodeURIComponent(topic)}`);
+        } catch {
+          throw new Error('Could not reach the server — check that it is running and that you are on the right address.');
+        }
+
+        // A gateway timeout or crash returns an HTML error page, not JSON, so
+        // parsing has to be guarded or it surfaces as a confusing syntax error.
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(res.status === 504 || res.status === 502
+            ? 'The brief took too long to generate and the request timed out. Try a narrower topic.'
+            : `Server returned an unreadable response (${res.status}).`);
+        }
+
+        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+        const n = data.articles.length;
+        const noneSummarized = n > 0 && data.articles.every(a => !a.summary);
+        setStatus(
+          noneSummarized ? `${n} stories · summaries unavailable right now`
+          : data.failed > 0 ? `${n} stories · ${data.failed} could not be summarized`
+          : `${n} stories`);
+        renderArticles(data.articles);
+      } catch (err) {
+        setStatus(err.message || 'Something went wrong.', true);
+        results.innerHTML = '';
+      } finally {
+        searchBtn.disabled = false;
+      }
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const topic = input.value.trim();
+      if (topic) runSearch(topic);
+    });
+
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        input.value = chip.textContent;
+        runSearch(chip.textContent);
+      });
+    });
+  </script>
+</body>
+</html>
