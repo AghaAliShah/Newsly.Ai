@@ -17,7 +17,7 @@ from newsbot.tools.http import request_with_retry
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Overridable via OPENROUTER_MODEL env var — free-tier slugs rotate often,
 # check https://openrouter.ai/api/v1/models for what's currently free.
-DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free"  # non-reasoning: answers directly, no thinking step to run out of budget
+DEFAULT_MODEL = "google/gemma-2-9b-it:free"  # non-reasoning: answers directly, no thinking step to run out of budget
 
 
 class SummarizeInput(BaseModel):
