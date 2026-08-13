@@ -24,7 +24,7 @@ flowchart TD
     subgraph private["Private — gated, writes to Slack + Sheets"]
         SLACK["POST /api/slack-update<br/>HMAC signature check"]
         TOPIC["GET /api/run-topic<br/>CRON_SECRET"]
-        CRON["GET /api/run<br/>CRON_SECRET, every 6h"]
+        CRON["GET /api/run<br/>CRON_SECRET, daily"]
         SLACK -->|"acks fast, fires async"| TOPIC
     end
 
@@ -52,7 +52,7 @@ the import back in later needs no other change.
 | `GET /api/headlines` | none | **no** | Ticker headlines, no LLM, cached 15 min at the edge |
 | `POST /api/slack-update` | Slack HMAC | via run-topic | The `/update <topic>` slash command |
 | `GET /api/run-topic?topic=` | `CRON_SECRET` | **yes** | Full pipeline for one ad-hoc topic |
-| `GET /api/run` | `CRON_SECRET` | **yes** | Cron job, every 6h over `NEWS_TOPICS` |
+| `GET /api/run` | `CRON_SECRET` | **yes** | Cron job, once daily over `NEWS_TOPICS` |
 
 Two details worth knowing:
 
@@ -144,8 +144,14 @@ Order matters — the Slack setup needs a real URL, so do it last.
 3. Confirm the deploy: the page should load and the ticker should populate.
 4. Set up the Slack command against your live domain (below).
 
-`vercel.json` registers the 6-hourly cron and the per-function timeouts. Vercel serves
+`vercel.json` registers the cron and the per-function timeouts. Vercel serves
 `index.html` and the `api/*.py` handlers natively; `dev_server.py` is local-only.
+
+The schedule is `30 3 * * *` — 03:30 UTC daily, which is 09:00 IST. **Vercel's Hobby
+plan allows only one cron run per day**, so anything more frequent (`0 */6 * * *`, say)
+is rejected at deploy time. Cron times are always UTC and Hobby runs are best-effort
+within the hour, not to the minute. For a brief on demand between runs, use the Slack
+`/update <topic>` command — that path has no schedule limit.
 
 ### Slack `/update` command
 
